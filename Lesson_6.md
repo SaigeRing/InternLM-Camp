@@ -144,7 +144,7 @@
   ceval-tax_accountant                            3a5e3c     accuracy  gen     42.86
   ceval-physician                                 6e277d     accuracy  gen     51.02
   ```
-- 不开 `--debug`
+- 不开 `--debug`, 换 40G 显存开发机，避免 OOM，所有数据集都出结果。
   ```bash
   dataset                                         version    metric         mode      internlm2-chat-7b
   ----------------------------------------------  ---------  -------------  ------  ----------------------
