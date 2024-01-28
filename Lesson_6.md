@@ -207,3 +207,143 @@
   ceval-hard                                      -          naive_average  gen       11.63
   ceval                                           -          naive_average  gen       42.94
   ```
+## 进阶-评测 LMDeploy 0.2.0 部署后在 C-Eval 数据集上的性能
+  ```bash
+  cp -r /root/share/model_repos/internlm2-chat-7b /root/model/Shanghai_AI_Laboratory/
+  # lmdeploy convert internlm2-chat-7b  /root/model/Shanghai_AI_Laboratory/internlm2-chat-7b/ --dst_path /root/internlm2-chat-7b-turbomind
+  export HF_MODEL=/root/model/Shanghai_AI_Laboratory/internlm2-chat-7b/
+  export WORK_DIR=/root/model/Shanghai_AI_Laboratory/internlm2-chat-7b-4bit/
+  lmdeploy lite auto_awq    $HF_MODEL   --calib-dataset 'ptb'   --calib-samples 128   --calib-seqlen 2048   --w-bits 4   --w-group-size 128   --work-dir $WORK_DIR
+  ```
+- 修改配置文件
+  ```python
+  from mmengine.config import read_base
+  from opencompass.models.turbomind import TurboMindModel
+  
+  with read_base():
+      # choose a list of datasets
+      # from .datasets.mmlu.mmlu_gen_a484b3 import mmlu_datasets
+      from .datasets.ceval.ceval_gen_5f30c7 import ceval_datasets
+      # from .datasets.SuperGLUE_WiC.SuperGLUE_WiC_gen_d06864 import WiC_datasets
+      # from .datasets.SuperGLUE_WSC.SuperGLUE_WSC_gen_7902a7 import WSC_datasets
+      # from .datasets.triviaqa.triviaqa_gen_2121ce import triviaqa_datasets
+      # from .datasets.gsm8k.gsm8k_gen_1d7fe4 import gsm8k_datasets
+      # from .datasets.race.race_gen_69ee4f import race_datasets
+      # from .datasets.crowspairs.crowspairs_gen_381af0 import crowspairs_datasets
+      # and output the results in a choosen format
+      # from .summarizers.medium import summarizer
+  
+  
+  datasets = sum((v for k, v in locals().items() if k.endswith('_datasets')), [])
+  
+  internlm_meta_template = dict(round=[
+      dict(role='HUMAN', begin='<|User|>:', end='\n'),
+      dict(role='BOT', begin='<|Bot|>:', end='<eoa>\n', generate=True),
+  ],
+                                eos_token_id=103028)
+  
+  # config for internlm-chat-7b
+  internlm_chat_7b = dict(
+      type=TurboMindModel,
+      abbr='internlm-chat-7b-turbomind',
+      path="/root/model/Shanghai_AI_Laboratory/internlm2-chat-7b-4bit",
+      engine_config=dict(session_len=512,
+                         max_batch_size=2,
+                         rope_scaling_factor=1.0),
+      gen_config=dict(top_k=1,
+                      top_p=0.8,
+                      temperature=1.0,
+                      max_new_tokens=100),
+      max_out_len=100,
+      max_seq_len=512,
+      batch_size=2,
+      concurrency=1,
+      meta_template=internlm_meta_template,
+      run_cfg=dict(num_gpus=1, num_procs=1),
+  )
+  
+  models = [internlm_chat_7b]
+  
+  ```
+  ```bash
+  python run.py configs/eval_internlm2_chat_4bit_turbomind.py --debug
+  ```
+  评测正常进行，资源占用情况如下
+  ```bash
+  +------------------------------------------------------------------------------+
+  | VGPU-SMI 1.7.13       Driver Version: 535.54.03     CUDA Version: 12.2       |
+  +-------------------------------------------+----------------------------------+
+  | GPU  Name                Bus-Id           |        Memory-Usage     GPU-Util |
+  |===========================================+==================================|
+  |   0  NVIDIA A100-SXM...  00000000:AD:00.0                 | 26152MiB / 40950MiB   41% /  25% |
+  +-------------------------------------------+----------------------------------+
+  ```
+- 观察到很多 warning `total sequence length (453 + 100) exceeds `session_len` (512)`。所以中断任务，修改配置文件中的 `max_seq_len=1024`。重新运行 `python run.py configs/eval_internlm2_chat_4bit_turbomind.py`
+  此时资源占用情况：
+  ```bash
+  +------------------------------------------------------------------------------+
+  | VGPU-SMI 1.7.13       Driver Version: 535.54.03     CUDA Version: 12.2       |
+  +-------------------------------------------+----------------------------------+
+  | GPU  Name                Bus-Id           |        Memory-Usage     GPU-Util |
+  |===========================================+==================================|
+  |   0  NVIDIA A100-SXM...  00000000:AD:00.0                 | 26184MiB / 40950MiB   26% /  25% |
+  +-------------------------------------------+----------------------------------+
+  ```
+- 评测结果
+  ```bash
+  dataset                                         version    metric    mode    internlm-chat-7b-turbomind
+  ----------------------------------------------  ---------  --------  ------  ----------------------------
+  ceval-computer_network                          db9ce2     accuracy  gen     57.89
+  ceval-operating_system                          1c2571     accuracy  gen     73.68
+  ceval-computer_architecture                     a74dad     accuracy  gen     57.14
+  ceval-college_programming                       4ca32a     accuracy  gen     45.95
+  ceval-college_physics                           963fa8     accuracy  gen     36.84
+  ceval-college_chemistry                         e78857     accuracy  gen     33.33
+  ceval-advanced_mathematics                      ce03e2     accuracy  gen     31.58
+  ceval-probability_and_statistics                65e812     accuracy  gen     50
+  ceval-discrete_mathematics                      e894ae     accuracy  gen     43.75
+  ceval-electrical_engineer                       ae42b9     accuracy  gen     48.65
+  ceval-metrology_engineer                        ee34ea     accuracy  gen     66.67
+  ceval-high_school_mathematics                   1dc5bf     accuracy  gen     44.44
+  ceval-high_school_physics                       adf25f     accuracy  gen     36.84
+  ceval-high_school_chemistry                     2ed27f     accuracy  gen     36.84
+  ceval-high_school_biology                       8e2b9a     accuracy  gen     26.32
+  ceval-middle_school_mathematics                 bee8d5     accuracy  gen     36.84
+  ceval-middle_school_biology                     86817c     accuracy  gen     76.19
+  ceval-middle_school_physics                     8accf6     accuracy  gen     57.89
+  ceval-middle_school_chemistry                   167a15     accuracy  gen     90
+  ceval-veterinary_medicine                       b4e08d     accuracy  gen     43.48
+  ceval-college_economics                         f3f4e6     accuracy  gen     45.45
+  ceval-business_administration                   c1614e     accuracy  gen     45.45
+  ceval-marxism                                   cf874c     accuracy  gen     84.21
+  ceval-mao_zedong_thought                        51c7a4     accuracy  gen     79.17
+  ceval-education_science                         591fee     accuracy  gen     68.97
+  ceval-teacher_qualification                     4e4ced     accuracy  gen     84.09
+  ceval-high_school_politics                      5c0de2     accuracy  gen     84.21
+  ceval-high_school_geography                     865461     accuracy  gen     57.89
+  ceval-middle_school_politics                    5be3e7     accuracy  gen     71.43
+  ceval-middle_school_geography                   8a63be     accuracy  gen     75
+  ceval-modern_chinese_history                    fc01af     accuracy  gen     78.26
+  ceval-ideological_and_moral_cultivation         a2aa4a     accuracy  gen     89.47
+  ceval-logic                                     f5b022     accuracy  gen     54.55
+  ceval-law                                       a110a1     accuracy  gen     41.67
+  ceval-chinese_language_and_literature           0f8b68     accuracy  gen     47.83
+  ceval-art_studies                               2a1300     accuracy  gen     60.61
+  ceval-professional_tour_guide                   4e673e     accuracy  gen     79.31
+  ceval-legal_professional                        ce8787     accuracy  gen     52.17
+  ceval-high_school_chinese                       315705     accuracy  gen     57.89
+  ceval-high_school_history                       7eb30a     accuracy  gen     80
+  ceval-middle_school_history                     48ab4a     accuracy  gen     81.82
+  ceval-civil_servant                             87d061     accuracy  gen     55.32
+  ceval-sports_science                            70f27b     accuracy  gen     73.68
+  ceval-plant_protection                          8941f9     accuracy  gen     72.73
+  ceval-basic_medicine                            c409d6     accuracy  gen     73.68
+  ceval-clinical_medicine                         49e82d     accuracy  gen     36.36
+  ceval-urban_and_rural_planner                   95b885     accuracy  gen     50
+  ceval-accountant                                002837     accuracy  gen     51.02
+  ceval-fire_engineer                             bc23f5     accuracy  gen     58.06
+  ceval-environmental_impact_assessment_engineer  c64e2d     accuracy  gen     48.39
+  ceval-tax_accountant                            3a5e3c     accuracy  gen     48.98
+  ceval-physician                                 6e277d     accuracy  gen     57.14
+  ```
+  可以看到量化后总体得分还更高了。
